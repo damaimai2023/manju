@@ -1,0 +1,715 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ==================== 用户与权限 ====================
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  password      String?
+  role          UserRole  @default(USER)
+  avatar        String?
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  projects      Project[]
+  apiKeys       ApiKey[]
+  usage         ApiUsage[]
+  aiTasks       AiTask[]
+  voices        Voice[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verificationtokens")
+}
+
+// ==================== AI配置 ====================
+model ApiKey {
+  id        String     @id @default(cuid())
+  name      String
+  key       String
+  provider  AiProvider
+  isActive  Boolean    @default(true)
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@map("api_keys")
+}
+
+enum AiProvider {
+  OPENAI
+  STABILITY_AI
+  MIDJOURNEY
+  ANTHROPIC
+  GOOGLE
+  ELEVENLABS
+  RUNWAY
+  KLING
+  SUNO
+  ALIYUN
+  CUSTOM
+}
+
+model ApiUsage {
+  id         String     @id @default(cuid())
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   AiProvider
+  operation  String
+  tokensUsed Int?
+  cost       Float      @default(0)
+  createdAt  DateTime   @default(now())
+
+  @@map("api_usage")
+}
+
+// ==================== AI模型配置 ====================
+
+model AiProviderConfig {
+  id          String    @id @default(cuid())
+  name        String    // 显示名称
+  provider    String    // openai, stability, anthropic等
+  apiKey      String?   // 平台默认密钥(加密存储)
+  baseUrl     String?   // 自定义API端点
+  isActive    Boolean   @default(true)
+  rateLimit   Int       @default(60) // 每分钟请求数
+  priority    Int       @default(0)  // 优先级
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  models      AiModel[]
+  tasks       AiTask[]
+
+  @@map("ai_provider_configs")
+}
+
+model AiModel {
+  id            String    @id @default(cuid())
+  providerId    String
+  provider      AiProviderConfig @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  modelId       String    // 模型标识符，如 gpt-4o, flux-dev
+  name          String    // 显示名称
+  type          ModelType // 模型类型
+  capabilities  String?   // 能力标签，JSON数组
+  maxTokens     Int?      // 文本模型最大token
+  contextWindow Int?      // 上下文窗口
+  
+  // 价格配置 (每1000单位)
+  inputPrice    Float?    // 输入价格
+  outputPrice   Float?    // 输出价格
+  imagePrice    Float?    // 图片生成价格
+  
+  config        String?   // 额外配置JSON
+  isActive      Boolean   @default(true)
+  isDefault     Boolean   @default(false) // 是否为该类型的默认模型
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tasks         AiTask[]
+
+  @@unique([providerId, modelId])
+  @@map("ai_models")
+}
+
+enum ModelType {
+  TEXT        // 文本生成 LLM
+  IMAGE       // 图像生成
+  VIDEO       // 视频生成
+  AUDIO       // 语音合成 TTS
+  MUSIC       // 音乐生成
+  MULTIMODAL  // 多模态
+}
+
+// ==================== AI任务队列 ====================
+
+model AiTask {
+  id            String    @id @default(cuid())
+  
+  type          AiTaskType
+  status        AiTaskStatus @default(PENDING)
+  
+  // 关联
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId     String?
+  project       Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  
+  // 模型配置
+  providerId    String
+  provider      AiProviderConfig @relation(fields: [providerId], references: [id])
+  modelId       String
+  model         AiModel   @relation(fields: [modelId], references: [id])
+  
+  // 任务输入
+  prompt        String
+  negativePrompt String?
+  parameters    String?   // JSON格式参数
+  
+  // 任务结果
+  resultUrl     String?   // 生成的文件URL
+  resultData    String?   // 结构化结果JSON
+  thumbnailUrl  String?   // 缩略图URL
+  error         String?   // 错误信息
+  errorCode     String?   // 错误代码
+  
+  // 成本追踪
+  cost          Float     @default(0)
+  tokensInput   Int?      // 输入token数
+  tokensOutput  Int?      // 输出token数
+  generationTime Int?     // 生成耗时（毫秒）
+  
+  // 队列管理
+  priority      Int       @default(0) // 0-10，数字越大优先级越高
+  retryCount    Int       @default(0)
+  maxRetries    Int       @default(3)
+  
+  // 时间戳
+  queuedAt      DateTime? // 入队时间
+  startedAt     DateTime? // 开始执行时间
+  completedAt   DateTime? // 完成时间
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId, status])
+  @@index([projectId, type])
+  @@index([status, priority, createdAt])
+  @@index([type, status, startedAt])
+  @@map("ai_tasks")
+}
+
+enum AiTaskType {
+  // 图像生成
+  CHARACTER_GENERATE   // 生成角色
+  CHARACTER_VIEW       // 生成角色特定视角
+  SCENE_GENERATE       // 生成场景
+  PROP_GENERATE        // 生成道具
+  STORYBOARD_SHOT      // 生成分镜图
+  IMAGE_STYLE_TRANSFER // 风格迁移
+  IMAGE_UPSCALE        // 图像放大
+  
+  // 视频生成
+  VIDEO_GENERATE       // 生成视频
+  VIDEO_EXTEND         // 视频延长
+  VIDEO_EDIT           // 视频编辑
+  
+  // 文本生成
+  SCRIPT_GENERATE      // 生成剧本
+  DIALOGUE_GENERATE    // 生成对话
+  DESCRIPTION_ENHANCE  // 优化描述
+  
+  // 音频生成
+  AUDIO_TTS            // 文本转语音
+  AUDIO_MUSIC          // 生成音乐
+  AUDIO_SOUND          // 生成音效
+  VOICE_CLONE          // 音色克隆
+  VOICE_TTS            // 指定音色语音合成
+  
+  // 多模态
+  MULTIMODAL_ANALYZE   // 多模态分析
+}
+
+enum AiTaskStatus {
+  PENDING     // 等待中
+  QUEUED      // 已入队
+  PROCESSING  // 处理中
+  COMPLETED   // 已完成
+  FAILED      // 失败
+  CANCELLED   // 已取消
+  TIMEOUT     // 超时
+}
+
+// ==================== 漫剧项目 ====================
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  coverImage  String?
+  status      ProjectStatus @default(DRAFT)
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  characters  Character[]
+  scenes      Scene[]
+  props       Prop[]
+  episodes    Episode[]
+  storyboards Storyboard[]
+  videos      Video[]
+  aiTasks     AiTask[]
+  voices      Voice[]
+
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  ARCHIVED
+}
+
+// ==================== 角色管理 ====================
+model Character {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  age         Int?
+  gender      String?
+
+  // JSON存储角色特征
+  appearance String?
+  features   String?
+
+  // 三视图
+  frontView  String?
+  sideView   String?
+  backView   String?
+  extraViews String?
+
+  // 角色设定
+  personality String?
+  background  String?
+  
+  // AI生成记录
+  aiGenerated     Boolean   @default(false)
+  aiPrompt        String?   // 使用的提示词
+  aiModelId       String?   // 使用的模型
+  aiGenerationId  String?   // 关联的生成任务ID
+
+  // 音色关联
+  voiceId     String?
+  voice       Voice?    @relation(fields: [voiceId], references: [id], onDelete: SetNull)
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shots Shot[]
+
+  @@map("characters")
+}
+
+// ==================== 场景管理 ====================
+model Scene {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  // 场景设定
+  timeOfDay  String?
+  atmosphere String?
+  style      String?
+
+  // 多视角图片
+  wideShot   String?
+  fullShot   String?
+  mediumShot String?
+  closeUp    String?
+  
+  // AI生成记录
+  aiGenerated     Boolean   @default(false)
+  aiPrompt        String?
+  aiModelId       String?
+  aiGenerationId  String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shots Shot[]
+
+  @@map("scenes")
+}
+
+// ==================== 道具管理 ====================
+model Prop {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  image       String?
+  category    String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("props")
+}
+
+// ==================== 剧集管理 ====================
+model Episode {
+  id          String   @id @default(cuid())
+  episodeNo   Int
+  title       String
+  description String?
+  script      String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  storyboards Storyboard[]
+
+  @@map("episodes")
+}
+
+// ==================== 分镜剧情管理 ====================
+model Storyboard {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episodeId String?
+  episode   Episode? @relation(fields: [episodeId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shots Shot[]
+  videoClips VideoClip[]
+
+  @@map("storyboards")
+}
+
+// ==================== 分镜管理（镜头）====================
+model Shot {
+  id          String      @id @default(cuid())
+  shotNo      Int
+  shotSize    ShotSize    @default(MEDIUM)
+  cameraAngle CameraAngle @default(EYE_LEVEL)
+  cameraMove  CameraMove  @default(STATIC)
+  duration    Int?
+
+  // 内容
+  description   String?
+  dialogue      String?
+  narration     String?
+  action        String?
+
+  // 关联资源
+  characterId String?
+  character   Character?  @relation(fields: [characterId], references: [id])
+  sceneId     String?
+  scene       Scene?      @relation(fields: [sceneId], references: [id])
+  propIds     String?
+
+  // AI生成
+  prompt         String?
+  generatedImage String?
+  status         ShotStatus @default(PENDING)
+
+  storyboardId String
+  storyboard   Storyboard @relation(fields: [storyboardId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  videoClips   VideoClip[]
+
+  @@map("shots")
+}
+
+enum ShotSize {
+  EXTREME_LONG
+  LONG
+  FULL
+  MEDIUM
+  CLOSE_UP
+  EXTREME_CLOSE
+}
+
+enum CameraAngle {
+  EYE_LEVEL
+  LOW_ANGLE
+  HIGH_ANGLE
+  DUTCH_ANGLE
+  OVER_SHOULDER
+}
+
+enum CameraMove {
+  STATIC
+  PAN
+  TILT
+  DOLLY
+  TRUCK
+  CRANE
+}
+
+enum ShotStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+// ==================== 视频管理 ====================
+
+model Video {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  coverImage  String?
+  duration    Int         @default(0)
+
+  status      VideoStatus @default(DRAFT)
+  resolution  String      @default("1080p")
+  frameRate   Int         @default(24)
+  format      String      @default("mp4")
+
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  clips       VideoClip[]
+  tracks      VideoTrack[]
+  tasks       VideoGenerationTask[]
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@map("videos")
+}
+
+enum VideoStatus {
+  DRAFT
+  EDITING
+  GENERATING
+  RENDERING
+  COMPLETED
+  EXPORTING
+  EXPORTED
+  FAILED
+}
+
+model VideoClip {
+  id           String     @id @default(cuid())
+  name         String
+  startTime    Int        @default(0)
+  duration     Int        @default(3000)
+  order        Int        @default(0)
+
+  videoId      String
+  video        Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  shotId       String?
+  shot         Shot?      @relation(fields: [shotId], references: [id])
+
+  storyboardId String?
+  storyboard   Storyboard? @relation(fields: [storyboardId], references: [id])
+
+  // 反向关联
+  generationTasks VideoGenerationTask[]
+
+  videoUrl     String?
+  thumbnail    String?
+
+  status       ClipStatus @default(PENDING)
+  aiPrompt     String?
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@map("video_clips")
+}
+
+enum ClipStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+  UPLOADED
+}
+
+model VideoTrack {
+  id        String      @id @default(cuid())
+  type      TrackType
+  name      String
+
+  videoId   String
+  video     Video       @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  items     TrackItem[]
+
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@map("video_tracks")
+}
+
+enum TrackType {
+  AUDIO
+  SUBTITLE
+}
+
+model TrackItem {
+  id        String     @id @default(cuid())
+  trackId   String
+  track     VideoTrack @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  startTime Int        @default(0)
+  duration  Int        @default(3000)
+
+  content   String
+  style     String?
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("track_items")
+}
+
+model VideoGenerationTask {
+  id        String     @id @default(cuid())
+
+  type      TaskType
+  status    TaskStatus @default(PENDING)
+
+  projectId String
+  videoId   String?
+  video     Video?     @relation(fields: [videoId], references: [id])
+  clipId    String?
+  clip      VideoClip? @relation(fields: [clipId], references: [id])
+
+  params    String?
+  resultUrl String?
+  error     String?
+  progress  Int        @default(0)
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("video_generation_tasks")
+}
+
+enum TaskType {
+  GENERATE_CLIP
+  EXPORT_VIDEO
+}
+
+enum TaskStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ==================== 音色管理 ====================
+
+model Voice {
+  id          String    @id @default(cuid())
+  name        String    // 音色名称
+  description String?   // 描述
+  
+  // 音色类型
+  type        VoiceType @default(STOCK)
+  
+  // 来源配置
+  provider    String    // 提供商: aliyun-cosyvoice
+  providerVoiceId String? // 提供商音色ID
+  
+  // 克隆音色特有字段
+  cloneAudioUrl   String?   // 克隆源音频URL
+  cloneText       String?   // 克隆文本
+  cloneStatus     CloneStatus @default(NONE)
+  cloneTaskId     String?   // 阿里云克隆任务ID
+  
+  // 预览音频
+  previewUrl      String?   // 预览音频URL
+  previewText     String?   // 预览文本
+  
+  // 关联
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId   String?   // 可选关联到项目
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  
+  // 角色关联（一个音色可用于多个角色）
+  characters  Character[]
+  
+  // 元数据
+  language    String    @default("zh") // 语言
+  gender      String?   // 性别
+  ageGroup    String?   // 年龄段
+  style       String?   // 风格标签
+  tags        String?   // JSON数组
+  
+  isDefault   Boolean   @default(false)
+  isActive    Boolean   @default(true)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, type])
+  @@index([projectId])
+  @@map("voices")
+}
+
+enum VoiceType {
+  STOCK     // 系统预设音色
+  CLONED    // 克隆音色
+  CUSTOM    // 自定义音色
+}
+
+enum CloneStatus {
+  NONE      // 未克隆
+  PENDING   // 克隆中
+  SUCCESS   // 克隆成功
+  FAILED    // 克隆失败
+}
