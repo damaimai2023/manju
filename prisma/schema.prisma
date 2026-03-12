@@ -1,0 +1,468 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ==================== 用户与权限 ====================
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  password      String?
+  role          UserRole  @default(USER)
+  avatar        String?
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  projects      Project[]
+  apiKeys       ApiKey[]
+  usage         ApiUsage[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verificationtokens")
+}
+
+// ==================== AI配置 ====================
+model ApiKey {
+  id        String     @id @default(cuid())
+  name      String
+  key       String
+  provider  AiProvider
+  isActive  Boolean    @default(true)
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@map("api_keys")
+}
+
+enum AiProvider {
+  OPENAI
+  STABLE_DIFFUSION
+  MIDJOURNEY
+  DALLE
+  CUSTOM
+}
+
+model ApiUsage {
+  id         String     @id @default(cuid())
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   AiProvider
+  operation  String
+  tokensUsed Int?
+  cost       Float      @default(0)
+  createdAt  DateTime   @default(now())
+
+  @@map("api_usage")
+}
+
+// ==================== 漫剧项目 ====================
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  coverImage  String?
+  status      ProjectStatus @default(DRAFT)
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  characters  Character[]
+  scenes      Scene[]
+  props       Prop[]
+  episodes    Episode[]
+  storyboards Storyboard[]
+  videos      Video[]
+
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  ARCHIVED
+}
+
+// ==================== 角色管理 ====================
+model Character {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  age         Int?
+  gender      String?
+
+  // JSON存储角色特征
+  appearance String?
+  features   String?
+
+  // 三视图
+  frontView  String?
+  sideView   String?
+  backView   String?
+  extraViews String?
+
+  // 角色设定
+  personality String?
+  background  String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shots Shot[]
+
+  @@map("characters")
+}
+
+// ==================== 场景管理 ====================
+model Scene {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  // 场景设定
+  timeOfDay  String?
+  atmosphere String?
+  style      String?
+
+  // 多视角图片
+  wideShot   String?
+  fullShot   String?
+  mediumShot String?
+  closeUp    String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shots Shot[]
+
+  @@map("scenes")
+}
+
+// ==================== 道具管理 ====================
+model Prop {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  image       String?
+  category    String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("props")
+}
+
+// ==================== 剧集管理 ====================
+model Episode {
+  id          String   @id @default(cuid())
+  episodeNo   Int
+  title       String
+  description String?
+  script      String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  storyboards Storyboard[]
+
+  @@map("episodes")
+}
+
+// ==================== 分镜剧情管理 ====================
+model Storyboard {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episodeId String?
+  episode   Episode? @relation(fields: [episodeId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shots Shot[]
+  videoClips VideoClip[]
+
+  @@map("storyboards")
+}
+
+// ==================== 分镜管理（镜头）====================
+model Shot {
+  id          String      @id @default(cuid())
+  shotNo      Int
+  shotSize    ShotSize    @default(MEDIUM)
+  cameraAngle CameraAngle @default(EYE_LEVEL)
+  cameraMove  CameraMove  @default(STATIC)
+  duration    Int?
+
+  // 内容
+  description   String?
+  dialogue      String?
+  narration     String?
+  action        String?
+
+  // 关联资源
+  characterId String?
+  character   Character?  @relation(fields: [characterId], references: [id])
+  sceneId     String?
+  scene       Scene?      @relation(fields: [sceneId], references: [id])
+  propIds     String?
+
+  // AI生成
+  prompt         String?
+  generatedImage String?
+  status         ShotStatus @default(PENDING)
+
+  storyboardId String
+  storyboard   Storyboard @relation(fields: [storyboardId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  videoClips   VideoClip[]
+
+  @@map("shots")
+}
+
+enum ShotSize {
+  EXTREME_LONG
+  LONG
+  FULL
+  MEDIUM
+  CLOSE_UP
+  EXTREME_CLOSE
+}
+
+enum CameraAngle {
+  EYE_LEVEL
+  LOW_ANGLE
+  HIGH_ANGLE
+  DUTCH_ANGLE
+  OVER_SHOULDER
+}
+
+enum CameraMove {
+  STATIC
+  PAN
+  TILT
+  DOLLY
+  TRUCK
+  CRANE
+}
+
+enum ShotStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+// ==================== 视频管理 ====================
+
+model Video {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  coverImage  String?
+  duration    Int         @default(0)
+
+  status      VideoStatus @default(DRAFT)
+  resolution  String      @default("1080p")
+  frameRate   Int         @default(24)
+  format      String      @default("mp4")
+
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  clips       VideoClip[]
+  tracks      VideoTrack[]
+  tasks       VideoGenerationTask[]
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@map("videos")
+}
+
+enum VideoStatus {
+  DRAFT
+  EDiTING
+  GENERATING
+  RENDERING
+  COMPLETED
+  EXPORTING
+  EXPORTED
+  FAILED
+}
+
+model VideoClip {
+  id           String     @id @default(cuid())
+  name         String
+  startTime    Int        @default(0)
+  duration     Int        @default(3000)
+  order        Int        @default(0)
+
+  videoId      String
+  video        Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  shotId       String?
+  shot         Shot?      @relation(fields: [shotId], references: [id])
+
+  storyboardId String?
+  storyboard   Storyboard? @relation(fields: [storyboardId], references: [id])
+
+  // 反向关联
+  generationTasks VideoGenerationTask[]
+
+  videoUrl     String?
+  thumbnail    String?
+
+  status       ClipStatus @default(PENDING)
+  aiPrompt     String?
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@map("video_clips")
+}
+
+enum ClipStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+  UPLOADED
+}
+
+model VideoTrack {
+  id        String      @id @default(cuid())
+  type      TrackType
+  name      String
+
+  videoId   String
+  video     Video       @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  items     TrackItem[]
+
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@map("video_tracks")
+}
+
+enum TrackType {
+  AUDIO
+  SUBTITLE
+}
+
+model TrackItem {
+  id        String     @id @default(cuid())
+  trackId   String
+  track     VideoTrack @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  startTime Int        @default(0)
+  duration  Int        @default(3000)
+
+  content   String
+  style     String?
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("track_items")
+}
+
+model VideoGenerationTask {
+  id        String     @id @default(cuid())
+
+  type      TaskType
+  status    TaskStatus @default(PENDING)
+
+  projectId String
+  videoId   String?
+  video     Video?     @relation(fields: [videoId], references: [id])
+  clipId    String?
+  clip      VideoClip? @relation(fields: [clipId], references: [id])
+
+  params    String?
+  resultUrl String?
+  error     String?
+  progress  Int        @default(0)
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("video_generation_tasks")
+}
+
+enum TaskType {
+  GENERATE_CLIP
+  EXPORT_VIDEO
+}
+
+enum TaskStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
